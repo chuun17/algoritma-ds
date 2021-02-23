@@ -1,0 +1,340 @@
+---
+title: "HR Attrition Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library
+```{r}
+library(dashboardthemes)
+library(DT)
+library(inTrees)
+library(glue)
+library(plotly)
+library(randomForest)
+library(scales)
+library(shiny)
+library(shinydashboard)
+library(tidyverse)
+```
+
+## Converted-function
+```{r}
+convert_age <- function(x){
+  if(x < 20){
+    x <- "< 20 Years Old"
+  }
+  else if(x >= 20 & x < 30){
+    x <- "20 - 29 Years Old"
+  } 
+  else if(x >= 30 & x < 40){
+    x <- "30 - 39 Years Old"
+  }
+  else if(x >= 40 & x < 50){
+    x <- "40 - 49 Years Old"
+  } 
+  else{
+    x <- ">= 50 Years Old"
+  }
+}
+
+convert_color <- function(x){
+  x <- tags$span(x, style = "color: white;")
+}
+
+convert_education <- function(x){
+  if(x == 1){
+    x <- "Below College"
+  }
+  else if(x == 2){
+    x <- "College"
+  } 
+  else if(x == 3){
+    x <- "Bachelor"
+  }
+  else if(x == 4){
+    x <- "Master"
+  } 
+  else{
+    x <- "Doctor"
+  }
+}
+
+convert_level <- function(x){
+  if(x == 1){
+    x <- "Low"
+  }
+  else if(x == 2){
+    x <- "Medium"
+  }
+  else if(x == 3){
+    x <- "High"
+  }
+  else{
+    x <- "Very High"
+  }
+}
+
+convert_stock <- function(x){
+  if(x == 1){
+    x <- "No stocks"
+  }
+  else if(x == 2){
+    x <- "Less Stocks"
+  }
+  else if(x == 3){
+    x <- "Moderate Stocks"
+  }
+  else{
+    x <- "A lot of Stocks"
+  }
+}
+
+convert_year <- function(x){
+  if(x <= 1){
+    x <- "<= 1 Years"
+  }
+  else if(x >= 2 & x <= 5){
+    x <- "2 - 5 Years"
+  } 
+  else if(x >= 6 & x <= 10){
+    x <- "6 - 10 Years"
+  }
+  else{
+    x <- "> 10 Years"
+  }
+}
+
+format_condition <- function(x){
+  x <- str_replace_all(x, "%in%", "IN")
+  x <- str_replace_all(x, "c\\(", "(" )
+  x <- str_remove_all(x, "'")
+}
+
+
+```
+
+## Load Data
+```{r}
+employee <- read.csv("hr_attrition/HR-Employee-Attrition.csv")
+glimpse(employee)
+```
+## Preprocessing
+
+```{r}
+anyNA(employee)
+```
+
+```{r}
+# Daftar kolom yang tidak dibutuhkan
+drop_colnames <- c("Employee_Count", "Employee_Number", "Over_18", 
+                   "Standard_Hours")
+
+# Drop kolom yang tidak dibutuhkan
+employee <- employee %>%
+  select(-drop_colnames) %>% 
+  rename("Age" = "ï..Age")
+```
+
+```{r}
+# Ganti karakter & menjadi and
+employee$Department <- str_replace_all(employee$Department, "&", "and")
+# Membuat feature baru
+employee$Role <- paste0("[", employee$Department, "] ", employee$Job_Role)
+employee$Age_Category <- sapply(employee$Age, convert_age)
+employee$Education <- sapply(employee$Education,
+                             convert_education)
+employee$Job_Involvement <- sapply(employee$Job_Involvement,
+                                   convert_level)
+employee$Job_Level <- sapply(employee$Job_Level,
+                             convert_level)
+employee$Stock_Option_Level <- sapply(employee$Stock_Option_Level,
+                                      convert_stock)
+employee$Years_At_Company_Category <- sapply(employee$Years_At_Company,
+                                             convert_year)
+employee$Years_In_Current_Role_Category <- sapply(employee$Years_In_Current_Role,
+                                                  convert_year)
+# Ubah nilai attrition menjadi numerik
+employee$Attrition <- sapply(employee$Attrition, switch,
+                             "Yes" = 1,
+                             "No" = 0)
+
+# Ganti column-type menjadi factor
+factor_col <- c("Age_Category", "Business_Travel", "Department", "Education",
+                "Education_Field", "Gender", "Job_Involvement", "Job_Level",
+                "Job_Role", "Marital_Status", "Over_Time", "Role",
+                "Stock_Option_Level", "Years_At_Company_Category",
+                "Years_In_Current_Role_Category")
+employee[, factor_col] <- lapply(employee[, factor_col], as.factor)
+
+```
+
+```{r}
+# Hilangkan karakter _ pada nama kolom
+colnames(employee) <- str_replace_all(colnames(employee), "_", " ")
+```
+
+## EDA
+```{r}
+attrition_rate <- mean(employee$Attrition)
+num_employee <- dim(employee)[1]
+
+num_attrition <- sum(employee$Attrition)
+```
+
+```{r}
+department_ratio <- employee %>%
+            group_by(Department) %>% 
+            summarise(Attrition_Ratio = sum(Attrition) / num_attrition)
+        
+plot_department_ratio <- plot_ly(department_ratio, 
+                                 labels = ~Department,
+                                 values = ~Attrition_Ratio,
+                                 sort = FALSE,
+                                 marker = list(
+                                         colors = c("#00b0f6", 
+                                                    "#00bf7d", 
+                                                    "#f8766d"),
+                                         line=list(
+                                             width=1)),
+                                 hoverinfo = "text",
+                                 hovertext = paste(
+                                     department_ratio$Department, 
+                                     "<br>Proportion: ",
+                                     round(department_ratio$Attrition_Ratio*100, 2),
+                                     "%")) %>% 
+    add_pie(hole = 0.4) %>% 
+    layout(title = "Attrition Proportion by Department",
+           legend = list(
+               x = 0.05,
+               y = -0.15,
+               font = list(
+                   family = "sans-serif",
+                   size = 10
+                   # color = "#000"
+               ),
+               # bgcolor = "#E2E2E2",
+               # bordercolor = "#FFFFFF",
+               borderwidth = 2,
+               orientation = 'h'))
+
+plot_department_ratio
+```
+```{r}
+data_department <- employee %>% 
+  group_by(Role) %>% 
+  summarise(Attrition = sum(Attrition)) %>% 
+  mutate(Total_Employees = table(employee$Role),
+         Total_Employees = as.numeric(Total_Employees),
+         "Non Attrition" = Total_Employees - Attrition) %>% 
+  pivot_longer(cols = c(Attrition, "Non Attrition"),
+               names_to = "Attrition",
+               values_to = "Count") %>% 
+  mutate(Proportion = Count / Total_Employees * 100)
+
+# rata-rata attrition rate tiap role
+non.attr_prop <- data_department %>% 
+    filter(Attrition == "Non Attrition") %>% 
+    select(Proportion)
+attr_prop_mean <- mean(non.attr_prop$Proportion)/100
+  
+plot_attr_composition <- data_department %>% 
+  ggplot(aes(x = Proportion, 
+             y = Role,
+             text = glue("{Role}
+               Proportion of {Attrition}: {round(Proportion, 2)}%"))) +
+  geom_col(aes(fill = Attrition), position = "fill") +
+  geom_vline(xintercept = attr_prop_mean, col = "black", lty = 2, lwd = 1.5) + 
+  labs(title = "Composition of\nAttrition vs Non-Attrition Employees",
+       x = NULL,
+       y = NULL) +
+  # scale_fill_manual(values = c("black", "firebrick")) +
+  scale_y_discrete(labels = wrap_format(30)) +
+  scale_x_continuous(labels = percent_format(accuracy = 1)) +
+  theme(axis.text.y = element_text(size=rel(.8)),
+                  plot.title = element_text(hjust = 0.5),
+                  plot.margin=unit(c(0,0,0,-50), "mm"))
+      
+ggplotly(plot_attr_composition, tooltip = "text")
+
+```
+```{r}
+agg_col <- "Education"
+        
+department_agg <- employee %>% 
+    group_by(Department, employee[, agg_col]) %>% 
+    summarise(Attrition = sum(Attrition))
+colnames(department_agg) <- c("Department", "Agg", "Attrition")
+
+plot_department_agg <- department_agg %>% 
+    ggplot(aes(x = Attrition,
+               y = reorder(Department, Attrition),
+               fill = Agg,
+               text = glue("{agg_col}: {Agg}
+                 Number of Attrition: {Attrition}"))) +
+    geom_col() +
+    labs(title = "Attrition Distribution Over Department",
+         x = NULL,
+         y = NULL,
+         fill = agg_col)
+
+ggplotly(plot_department_agg, tooltip = "text")
+```
+## Important Features
+```{r}
+X <- subset(employee, select = -Attrition)
+y <- as.factor(employee$Attrition)
+
+model.rf <- randomForest(X, y, ntree = 50)
+importances <- model.rf$importance
+total <- sum(importances)
+importance_features <- data.frame(feature = row.names(importances),
+                                  importance = importances[, 1]/total, 
+                                  row.names = NULL)
+n_top <- as.integer(10)
+print(n_top)
+top_n_features <- tail(importance_features[order(importance_features$importance),], n = n_top)
+
+plot_ranking <- top_n_features %>% 
+    ggplot(aes(x = importance, 
+               y = reorder(feature, importance),
+               text = glue("{feature}
+                 Affect: {round(importance*100, 2)}%"))) +
+    geom_col(aes(fill = importance)) +
+    
+    labs( x = NULL,
+          y = NULL,
+          title = glue("Top {n_top} Most Important Features to Predict Employee Attrition")) +
+    scale_y_discrete(labels = wrap_format(30)) + 
+    scale_x_continuous(labels = percent_format(accuracy = 1)) +
+    scale_fill_gradient(low = "#912121", high = "#FF194E") +
+    theme(legend.position = "none")
+
+ggplotly(plot_ranking, tooltip = "text")
+```
+## Employee Attrition Segmentation
+```{r}
+model.rfs <- randomForest(X, y, ntree = 50)
+treeList <- RF2List(model.rfs)
+
+ruleExec <- extractRules(treeList,X, maxdepth = 5)
+ruleMetric <- getRuleMetric(ruleExec,X,y) # measure rules
+ruleMetric <- pruneRule(ruleMetric, X, y)
+ruleMetric <- presentRules(ruleMetric, colnames(X))
+ruleMetric <- unique(ruleMetric)
+
+rule.df <- data.frame(condition = ruleMetric[,"condition"],
+                      freq = as.numeric(ruleMetric[, "freq"]),
+                      err = as.numeric(ruleMetric[, "err"]),
+                      pred = as.numeric(ruleMetric[, "pred"]))
+rule.df <- rule.df %>% 
+    mutate(attr_rate = abs(pred - err)) %>% 
+    arrange(desc(attr_rate), desc(freq))
+
+top10 <- head(rule.df, n = 10)
+top10
+```
+

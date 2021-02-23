@@ -1,0 +1,12 @@
+name: hr_attrition
+title: hr_attrition
+username:
+account: chuun17
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 3441939
+bundleId: 4076764
+url: https://chuun17.shinyapps.io/hr_attrition/
+when: 1610225110.5036
+asMultiple: FALSE
+asStatic: FALSE
